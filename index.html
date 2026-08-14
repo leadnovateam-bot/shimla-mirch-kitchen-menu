@@ -2098,256 +2098,235 @@ body{visibility:visible!important}
     $('v19-invoice').setAttribute('aria-hidden','true');
   }
 
+  // V43: Save & Order uses a single synchronous user-gesture flow.
+  // 1) Generate the PNG synchronously from the already-rendered invoice.
+  // 2) Give every click a cryptographically unique filename.
+  // 3) Trigger the download and the WhatsApp app deep-link from the same click.
   function downloadBlob(blob,name){
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');
-    a.href=url; a.download=name; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1500);
+    a.href=url;
+    a.download=name;
+    a.rel='noopener';
+    a.style.display='none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
   }
 
-  function escapeXml(s){
-    return String(s).replace(/[<>&'"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;',"'":'&apos;','"':'&quot;'}[c]));
+  function uniqueBillFileName(order){
+    const now=new Date();
+    const stamp=now.getFullYear()+
+      String(now.getMonth()+1).padStart(2,'0')+
+      String(now.getDate()).padStart(2,'0')+'-'+
+      String(now.getHours()).padStart(2,'0')+
+      String(now.getMinutes()).padStart(2,'0')+
+      String(now.getSeconds()).padStart(2,'0')+'-'+
+      String(now.getMilliseconds()).padStart(3,'0');
+    let randomPart='';
+    if(window.crypto && typeof window.crypto.randomUUID==='function'){
+      randomPart=window.crypto.randomUUID();
+    }else if(window.crypto && typeof window.crypto.getRandomValues==='function'){
+      randomPart=Array.from(window.crypto.getRandomValues(new Uint32Array(4)))
+        .map(n=>n.toString(36)).join('-');
+    }else{
+      randomPart=Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2);
+    }
+    return 'Shimla-Mirch-Bill-'+order+'-'+stamp+'-'+randomPart+'.png';
   }
 
-  async function makeBillPng(){
+  function buildWhatsAppDeepLink(message){
+    const phone='918240512557';
+    const text=encodeURIComponent(message || '');
+    const ua=navigator.userAgent || '';
+    const isAndroid=/Android/i.test(ua);
+    const isIOS=/iPhone|iPad|iPod/i.test(ua) ||
+      (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+
+    // Android Chrome supports intent: URLs when initiated by a user gesture.
+    // No HTTP WhatsApp page is used as the primary Android destination.
+    if(isAndroid){
+      return 'intent://send?phone='+phone+'&text='+text+
+        '#Intent;scheme=whatsapp;package=com.whatsapp;end';
+    }
+
+    // iOS uses WhatsApp's registered custom URL scheme.
+    if(isIOS){
+      return 'whatsapp://send?phone='+phone+'&text='+text;
+    }
+
+    // Non-mobile fallback only. Android/iOS never use this as their primary path.
+    return 'https://wa.me/'+phone+'?text='+text;
+  }
+
+  function drawBillToDataUrl(){
+    const items=selectedItems();
+    if(!items.length) throw new Error('Please select at least one item.');
+
+    const W=820;
+    const pad=34;
+    const inner=W-pad*2;
+    const rowH=52;
+    const header=document.querySelector('.header-art img');
+    const footer=document.querySelector('.footer-art img');
+
+    // Save & Order is deliberately kept synchronous so the browser still
+    // considers the WhatsApp launch part of the original button gesture.
+    const headerImg=(header && header.complete && header.naturalWidth) ? header : null;
+    const footerImg=(footer && footer.complete && footer.naturalWidth) ? footer : null;
+
+    const headerH=headerImg ? Math.round(inner*(headerImg.naturalHeight/headerImg.naturalWidth)) : 0;
+    const footerH=footerImg ? Math.round(inner*(footerImg.naturalHeight/footerImg.naturalWidth)) : 0;
+    const metaH=270;
+    const tableHeadH=46;
+    const tableH=tableHeadH + items.length*rowH;
+    const totalsH=130;
+    const bodyH=metaH+tableH+totalsH+70;
+    const H=headerH+bodyH+footerH;
+
+    const scale=2;
+    const canvas=document.createElement('canvas');
+    canvas.width=W*scale;
+    canvas.height=H*scale;
+    const ctx=canvas.getContext('2d');
+    if(!ctx) throw new Error('Canvas is not available.');
+    ctx.scale(scale,scale);
+    ctx.fillStyle='#fff';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#111';
+    ctx.textBaseline='alphabetic';
+
+    let y=0;
+    if(headerImg){
+      ctx.drawImage(headerImg,0,y,W,headerH);
+      y+=headerH;
+    }
+    ctx.fillStyle='#fff';
+    ctx.fillRect(0,y,W,bodyH);
+
+    const line=(x1,yy,x2,yy2='#ccc',w=1)=>{
+      ctx.strokeStyle=yy2;ctx.lineWidth=w;ctx.beginPath();
+      ctx.moveTo(x1,yy);ctx.lineTo(x2,yy);ctx.stroke();
+    };
+    const label=(txt,x,yy)=>{
+      ctx.font='14px Arial,Helvetica,sans-serif';ctx.fillStyle='#777';ctx.fillText(txt,x,yy);
+    };
+    const value=(txt,x,yy)=>{
+      ctx.font='700 18px Arial,Helvetica,sans-serif';ctx.fillStyle='#111';ctx.fillText(txt,x,yy);
+    };
+
+    const metaBoxX=18;
+    const metaBoxY=y+18;
+    const metaBoxW=W-36;
+    const metaBoxH=metaH-36;
+    const metaRadius=10;
+    const metaInnerPad=12;
+    const metaY=metaBoxY+24;
+    const leftX=metaBoxX+metaInnerPad;
+    const centerX=metaBoxX+metaBoxW/2;
+    const rightX=metaBoxX+metaBoxW-metaInnerPad;
+
+    ctx.strokeStyle='#d7d7d7';ctx.lineWidth=1;ctx.fillStyle='#fff';ctx.beginPath();
+    ctx.moveTo(metaBoxX+metaRadius,metaBoxY);
+    ctx.lineTo(metaBoxX+metaBoxW-metaRadius,metaBoxY);
+    ctx.quadraticCurveTo(metaBoxX+metaBoxW,metaBoxY,metaBoxX+metaBoxW,metaBoxY+metaRadius);
+    ctx.lineTo(metaBoxX+metaBoxW,metaBoxY+metaBoxH-metaRadius);
+    ctx.quadraticCurveTo(metaBoxX+metaBoxW,metaBoxY+metaBoxH,metaBoxX+metaBoxW-metaRadius,metaBoxY+metaBoxH);
+    ctx.lineTo(metaBoxX+metaRadius,metaBoxY+metaBoxH);
+    ctx.quadraticCurveTo(metaBoxX,metaBoxY+metaBoxH,metaBoxX,metaBoxY+metaBoxH-metaRadius);
+    ctx.lineTo(metaBoxX,metaBoxY+metaRadius);
+    ctx.quadraticCurveTo(metaBoxX,metaBoxY,metaBoxX+metaRadius,metaBoxY);
+    ctx.closePath();ctx.fill();ctx.stroke();
+
+    ctx.textAlign='left';
+    label('Customer ID',leftX,metaY);value($('v19-order-id').textContent || '',leftX,metaY+23);
+    label('Date • Day',leftX,metaY+52);value($('v19-order-day').textContent || '',leftX,metaY+75);
+    ctx.textAlign='center';
+    label('Customer Name',centerX,metaY);value($('v19-order-customer').textContent || 'Guest',centerX,metaY+23);
+    label('Phone Number',centerX,metaY+52);value($('v19-order-phone').textContent || '—',centerX,metaY+75);
+    ctx.textAlign='right';
+    label('Date',rightX,metaY);value($('v19-order-date').textContent || '',rightX,metaY+23);
+    label('Time',rightX,metaY+52);value($('v19-order-time').textContent || '',rightX,metaY+75);
+    ctx.textAlign='left';
+
+    const bottomRuleY=metaY+95;
+    line(leftX,bottomRuleY,rightX,'#e6e6e6',1);
+    let addressText=String($('v19-order-address').textContent || '—');
+    const addressMaxChars=78;
+    if(addressText.length>addressMaxChars) addressText=addressText.slice(0,addressMaxChars-1)+'…';
+    label('Delivery Address',leftX,metaY+117);value(addressText,leftX,metaY+140);
+    label('Payment Mode',leftX,metaY+169);value($('v19-order-payment').textContent || 'Cash on Delivery',leftX,metaY+192);
+
+    let ty=y+metaH+12;
+    ctx.font='700 15px Arial,Helvetica,sans-serif';ctx.fillStyle='#111';
+    ctx.textAlign='left';ctx.fillText('#',pad,ty);ctx.fillText('Item',pad+52,ty);
+    ctx.textAlign='right';ctx.fillText('Qty',W-pad-170,ty);ctx.fillText('Rate',W-pad-95,ty);ctx.fillText('Amount',W-pad,ty);
+    ctx.textAlign='left';line(pad,ty+15,W-pad,'#bbb',1);
+
+    let total=0;
+    items.forEach((it,i)=>{
+      const yy=ty+tableHeadH+i*rowH;
+      const amount=it.price*it.qty;total+=amount;
+      ctx.font='700 16px Arial,Helvetica,sans-serif';ctx.fillStyle='#111';ctx.fillText(String(i+1)+'.',pad,yy);
+      ctx.font='16px Arial,Helvetica,sans-serif';
+      let name=String(it.name||'');
+      const maxChars=38;if(name.length>maxChars) name=name.slice(0,maxChars-1)+'…';
+      ctx.fillText(name,pad+52,yy);
+      ctx.textAlign='right';ctx.fillText(String(it.qty),W-pad-170,yy);ctx.fillText(money(it.price),W-pad-95,yy);
+      ctx.font='700 16px Arial,Helvetica,sans-serif';ctx.fillText(money(amount),W-pad,yy);ctx.textAlign='left';
+      line(pad,yy+18,W-pad,'#ddd',1);
+    });
+
+    const totalTop=y+metaH+tableH+28;
+    const totalX=W-pad-280;
+    line(totalX,totalTop,W-pad,totalTop,'#111',2);
+    ctx.font='17px Arial,Helvetica,sans-serif';ctx.fillStyle='#111';ctx.fillText('Subtotal',totalX,totalTop+30);
+    ctx.textAlign='right';ctx.font='700 18px Arial,Helvetica,sans-serif';ctx.fillText(money(total),W-pad,totalTop+30);ctx.textAlign='left';
+    line(totalX,totalTop+43,W-pad,totalTop+43,'#111',2);
+    ctx.font='700 24px Arial,Helvetica,sans-serif';ctx.fillText('Grand Total',totalX,totalTop+82);
+    ctx.textAlign='right';ctx.fillText(money(total),W-pad,totalTop+82);ctx.textAlign='left';
+
+    y+=bodyH;
+    if(footerImg) ctx.drawImage(footerImg,0,y,W,footerH);
+
+    return canvas.toDataURL('image/png');
+  }
+
+  function dataUrlToBlob(dataUrl){
+    const parts=dataUrl.split(',');
+    const mime=(parts[0].match(/:(.*?);/)||[])[1] || 'image/png';
+    const binary=atob(parts[1]);
+    const bytes=new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+    return new Blob([bytes],{type:mime});
+  }
+
+  function makeBillPng(){
     const items=selectedItems();
     if(!items.length){alert('Please select at least one item.');return;}
 
-    /*
-     * V26: do NOT use SVG foreignObject.
-     * Android Chrome can fail to rasterize foreignObject and that was the
-     * reason V25 showed "Bill image could not be generated".
-     *
-     * Instead, draw the same invoice structure directly onto a canvas:
-     * header artwork + order details + customer + item table + totals +
-     * footer artwork. This works without any external library or CDN.
-     */
     try{
-      const W=820;
-      const pad=34;
-      const inner=W-pad*2;
-      const rowH=52;
-      const header=document.querySelector('.header-art img');
-      const footer=document.querySelector('.footer-art img');
-
-      function loadImage(src){
-        return new Promise((resolve,reject)=>{
-          if(!src){resolve(null);return;}
-          const im=new Image();
-          im.onload=()=>resolve(im);
-          im.onerror=reject;
-          im.src=src;
-        });
-      }
-
-      const [headerImg,footerImg]=await Promise.all([
-        loadImage(header && header.src),
-        loadImage(footer && footer.src)
-      ]);
-
-      const headerH=headerImg ? Math.round(inner*(headerImg.naturalHeight/headerImg.naturalWidth)) : 0;
-      const footerH=footerImg ? Math.round(inner*(footerImg.naturalHeight/footerImg.naturalWidth)) : 0;
-
-      const metaH=270;
-      const tableHeadH=46;
-      const tableH=tableHeadH + items.length*rowH;
-      const totalsH=130;
-      const bodyTop=headerH;
-      const bodyH=metaH+tableH+totalsH+70;
-      const H=headerH+bodyH+footerH;
-
-      const scale=2;
-      const canvas=document.createElement('canvas');
-      canvas.width=W*scale;
-      canvas.height=H*scale;
-      const ctx=canvas.getContext('2d');
-      ctx.scale(scale,scale);
-      ctx.fillStyle='#fff';
-      ctx.fillRect(0,0,W,H);
-      ctx.fillStyle='#111';
-      ctx.textBaseline='alphabetic';
-
-      let y=0;
-
-      if(headerImg){
-        ctx.drawImage(headerImg,0,y,W,headerH);
-        y+=headerH;
-      }
-
-      // Main white invoice body
-      ctx.fillStyle='#fff';
-      ctx.fillRect(0,y,W,bodyH);
-
-      const line=(x1,yy,x2,yy2='#ccc',w=1)=>{
-        ctx.strokeStyle=yy2;
-        ctx.lineWidth=w;
-        ctx.beginPath();ctx.moveTo(x1,yy);ctx.lineTo(x2,yy);ctx.stroke();
-      };
-
-      const label=(txt,x,yy)=>{
-        ctx.font='14px Arial,Helvetica,sans-serif';
-        ctx.fillStyle='#777';
-        ctx.fillText(txt,x,yy);
-      };
-
-      const value=(txt,x,yy)=>{
-        ctx.font='700 18px Arial,Helvetica,sans-serif';
-        ctx.fillStyle='#111';
-        ctx.fillText(txt,x,yy);
-      };
-
-      // V36: saved PNG customer-information box must visually match View Bill.
-      // Keep the same rounded corners and inner horizontal padding so the
-      // left/right text never touches the box edge. No other invoice layout
-      // or functionality is changed.
-      const metaBoxX=18;
-      const metaBoxY=y+18;
-      const metaBoxW=W-36;
-      const metaBoxH=metaH-36;
-      const metaRadius=10;
-      const metaInnerPad=12;
-      const metaY=metaBoxY+24;
-      const leftX=metaBoxX+metaInnerPad;
-      const centerX=metaBoxX+metaBoxW/2;
-      const rightX=metaBoxX+metaBoxW-metaInnerPad;
-
-      ctx.strokeStyle='#d7d7d7';
-      ctx.lineWidth=1;
-      ctx.fillStyle='#fff';
-      ctx.beginPath();
-      ctx.moveTo(metaBoxX+metaRadius,metaBoxY);
-      ctx.lineTo(metaBoxX+metaBoxW-metaRadius,metaBoxY);
-      ctx.quadraticCurveTo(metaBoxX+metaBoxW,metaBoxY,metaBoxX+metaBoxW,metaBoxY+metaRadius);
-      ctx.lineTo(metaBoxX+metaBoxW,metaBoxY+metaBoxH-metaRadius);
-      ctx.quadraticCurveTo(metaBoxX+metaBoxW,metaBoxY+metaBoxH,metaBoxX+metaBoxW-metaRadius,metaBoxY+metaBoxH);
-      ctx.lineTo(metaBoxX+metaRadius,metaBoxY+metaBoxH);
-      ctx.quadraticCurveTo(metaBoxX,metaBoxY+metaBoxH,metaBoxX,metaBoxY+metaBoxH-metaRadius);
-      ctx.lineTo(metaBoxX,metaBoxY+metaRadius);
-      ctx.quadraticCurveTo(metaBoxX,metaBoxY,metaBoxX+metaRadius,metaBoxY);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.textAlign='left';
-      label('Customer ID',leftX,metaY);
-      value($('v19-order-id').textContent || '',leftX,metaY+23);
-      label('Date • Day',leftX,metaY+52);
-      value($('v19-order-day').textContent || '',leftX,metaY+75);
-
-      ctx.textAlign='center';
-      label('Customer Name',centerX,metaY);
-      value($('v19-order-customer').textContent || 'Guest',centerX,metaY+23);
-      label('Phone Number',centerX,metaY+52);
-      value($('v19-order-phone').textContent || '—',centerX,metaY+75);
-
-      ctx.textAlign='right';
-      label('Date',rightX,metaY);
-      value($('v19-order-date').textContent || '',rightX,metaY+23);
-      label('Time',rightX,metaY+52);
-      value($('v19-order-time').textContent || '',rightX,metaY+75);
-      ctx.textAlign='left';
-
-      // V37: Delivery Address + Payment Mode, full width beneath the
-      // existing ID/Name/Date row — mirrors the View Bill layout exactly.
-      const bottomRuleY=metaY+95;
-      line(leftX,bottomRuleY,rightX,'#e6e6e6',1);
-
-      let addressText=String($('v19-order-address').textContent || '—');
-      const addressMaxChars=78;
-      if(addressText.length>addressMaxChars) addressText=addressText.slice(0,addressMaxChars-1)+'…';
-
-      ctx.textAlign='left';
-      label('Delivery Address',leftX,metaY+117);
-      value(addressText,leftX,metaY+140);
-
-      label('Payment Mode',leftX,metaY+169);
-      value($('v19-order-payment').textContent || 'Cash on Delivery',leftX,metaY+192);
-
-      // Table
-      let ty=y+metaH+12;
-      ctx.font='700 15px Arial,Helvetica,sans-serif';
-      ctx.fillStyle='#111';
-      ctx.fillText('#',pad,ty);
-      ctx.fillText('Item',pad+52,ty);
-      ctx.textAlign='right';
-      ctx.fillText('Qty',W-pad-170,ty);
-      ctx.fillText('Rate',W-pad-95,ty);
-      ctx.fillText('Amount',W-pad,ty);
-      ctx.textAlign='left';
-      line(pad,ty+15,W-pad,'#bbb',1);
-
-      let total=0;
-      items.forEach((it,i)=>{
-        const yy=ty+tableHeadH+i*rowH;
-        const amount=it.price*it.qty;
-        total+=amount;
-
-        ctx.font='700 16px Arial,Helvetica,sans-serif';
-        ctx.fillStyle='#111';
-        ctx.fillText(String(i+1)+'.',pad,yy);
-        ctx.font='16px Arial,Helvetica,sans-serif';
-
-        let name=String(it.name||'');
-        const maxChars=38;
-        if(name.length>maxChars) name=name.slice(0,maxChars-1)+'…';
-        ctx.fillText(name,pad+52,yy);
-
-        ctx.textAlign='right';
-        ctx.fillText(String(it.qty),W-pad-170,yy);
-        ctx.fillText(money(it.price),W-pad-95,yy);
-        ctx.font='700 16px Arial,Helvetica,sans-serif';
-        ctx.fillText(money(amount),W-pad,yy);
-        ctx.textAlign='left';
-
-        line(pad,yy+18,W-pad,'#ddd',1);
-      });
-
-      // Totals
-      const totalTop=y+metaH+tableH+28;
-      const totalX=W-pad-280;
-      line(totalX,totalTop,W-pad,totalTop,'#111',2);
-      ctx.font='17px Arial,Helvetica,sans-serif';
-      ctx.fillStyle='#111';
-      ctx.fillText('Subtotal',totalX,totalTop+30);
-      ctx.textAlign='right';
-      ctx.font='700 18px Arial,Helvetica,sans-serif';
-      ctx.fillText(money(total),W-pad,totalTop+30);
-      ctx.textAlign='left';
-
-      line(totalX,totalTop+43,W-pad,totalTop+43,'#111',2);
-      ctx.font='700 24px Arial,Helvetica,sans-serif';
-      ctx.fillText('Grand Total',totalX,totalTop+82);
-      ctx.textAlign='right';
-      ctx.fillText(money(total),W-pad,totalTop+82);
-      ctx.textAlign='left';
-
-      y+=bodyH;
-
-      if(footerImg){
-        ctx.drawImage(footerImg,0,y,W,footerH);
-      }
-
-      const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png',1));
-      if(!blob) throw new Error('PNG creation failed');
-
+      const dataUrl=drawBillToDataUrl();
+      const blob=dataUrlToBlob(dataUrl);
       const order=$('v19-order-id').textContent || ('SMK-'+Date.now());
-      const fileName=order+'.png';
+      const fileName=uniqueBillFileName(order);
       downloadBlob(blob,fileName);
 
-      // Direct restaurant WhatsApp chat. The browser cannot silently attach
-      // a local file to a WhatsApp chat, so the PNG is saved first and the
-      // exact restaurant chat opens with the instruction to attach it.
-      const waLink=document.querySelector('.v19-whatsapp[href*="wa.me"]');
-      let waUrl='https://wa.me/918240512557';
-      if(waLink){
-        try{waUrl=new URL(waLink.href,location.href).href;}catch(e){}
-      }
-      const base=waUrl.split('?')[0];
       const message='1. Upload your bill screenshot from your gallery and send.\n2. Send your current GPS location.\n3. If you are paying online, then send your payment screenshot.';
-      window.location.href=base+'?text='+encodeURIComponent(message);
+      const whatsappUrl=buildWhatsAppDeepLink(message);
 
+      // Anchor navigation is used instead of window.location so the external
+      // app launch remains tied to the original Save & Order user gesture.
+      const wa=document.createElement('a');
+      wa.href=whatsappUrl;
+      wa.rel='noopener';
+      wa.style.display='none';
+      document.body.appendChild(wa);
+      wa.click();
+      wa.remove();
     }catch(e){
-      console.error('V26 bill image error',e);
+      console.error('V43 bill image error',e);
       alert('Bill screenshot could not be saved on this browser. The bill is still available on screen.');
     }
   }
@@ -2666,32 +2645,7 @@ body{visibility:visible!important}
 </script>
 
 
-<script>
-/* V23: best-effort WhatsApp image sharing.
-   Browser security does not allow a normal HTML page to force a local image
-   into a specific WhatsApp chat. When supported, this opens Android's share
-   sheet with the generated bill PNG already attached. */
-window.smkV23ShareBillImage = async function(file, whatsappNumber, message) {
-  try {
-    if (file && navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))) {
-      await navigator.share({
-        files: [file],
-        text: message || ''
-      });
-      return { shared: true, mode: 'native-file-share' };
-    }
-  } catch (err) {
-    if (err && err.name === 'AbortError') return { shared: false, cancelled: true };
-  }
 
-  // Fallback: open the restaurant's WhatsApp chat with the order text.
-  // The PNG remains saved in the customer's File Manager.
-  const digits = String(whatsappNumber || '').replace(/\D/g, '');
-  const url = 'https://wa.me/' + digits + '?text=' + encodeURIComponent(message || '');
-  window.location.href = url;
-  return { shared: false, mode: 'whatsapp-chat-fallback' };
-};
-</script>
 
 
 <script id="smk-v24-order-flow">
