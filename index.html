@@ -1477,6 +1477,29 @@ body{visibility:visible!important}
 }
 </style>
 
+
+<style id="smk-v58-first-paint-loading">
+/* V58: keep the floating Make Bill control out of the first paint.
+   It becomes visible as soon as the document DOM is ready. */
+html.smk-v58-loading #v19-make-bill{
+  visibility:hidden!important;
+  opacity:0!important;
+  pointer-events:none!important;
+}
+</style>
+<script id="smk-v58-first-paint-loading-runtime">
+(function(){
+  document.documentElement.classList.add('smk-v58-loading');
+  function reveal(){
+    document.documentElement.classList.remove('smk-v58-loading');
+  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',reveal,{once:true});
+  }else{
+    reveal();
+  }
+})();
+</script>
 </head>
 <body>
 
